@@ -1,90 +1,68 @@
-import React, { useEffect, useState } from 'react';
-import io from 'socket.io-client';
-import './App.css'; // Connects the modern layout stylesheet classes
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const cors = require('cors');
+const mongoose = require('mongoose');
 
-// Connect to the backend server running on port 5001
-const socket = io.connect("http://localhost:5001");
+// Connect to MongoDB locally on your Mac
+mongoose.connect('mongodb://localhost:27017/sssnappy-chat')
+    .then(() => console.log('Successfully connected to MongoDB!'))
+    .catch((error) => console.error('MongoDB connection error:', error));
 
-function App() {
-  const [message, setMessage] = useState("");
-  const [messageList, setMessageList] = useState([]);
+// Create an inline database message schema model structure
+const Message = mongoose.model('Message', new mongoose.Schema({
+    text: { type: String, required: true },
+    time: { type: String, required: true },
+    senderId: { type: String, required: true }
+}, { timestamps: true }));
 
-  const sendMessage = () => {
-    if (message.trim() !== "") {
-      // FIX: Clean, proper message data packet tagged with your unique socket id
-      const messageData = {
-        text: message,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        senderId: socket.id 
-      };
+const app = express();
+app.use(cors());
 
-      // Emit message to backend server
-      socket.emit("send_message", messageData);
-      
-      // Update local message list for yourself
-      setMessageList((list) => [...list, messageData]);
-      setMessage("");
+const server = http.createServer(app);
+
+const io = new Server(server, {
+    cors: {
+        origin: "http://localhost:3000",
+        methods: ["GET", "POST"]
     }
-  };
+});
 
-  useEffect(() => {
-    // Listen for the initial message history dump from the database
-    socket.on("load_messages", (messages) => {
-      setMessageList(messages);
+io.on('connection', async (socket) => {
+    console.log(`User connected: ${socket.id}`);
+
+    // Fetch old messages history from MongoDB database dump
+    try {
+        const previousMessages = await Message.find().sort({ createdAt: 1 });
+        socket.emit('load_messages', previousMessages);
+    } catch (error) {
+        console.error("Error fetching message history:", error);
+    }
+
+    // Intercept and save chat text streams live
+    socket.on('send_message', async (data) => {
+        try {
+            const newMessage = new Message({
+                text: data.text,
+                time: data.time,
+                senderId: data.senderId
+            });
+            await newMessage.save();
+
+            // Broadcast message live out to other active windows
+            socket.broadcast.emit('receive_message', data);
+        } catch (error) {
+            console.error("Error saving message context to database:", error);
+        }
     });
 
-    // Listen for incoming messages broadcasted by the server
-    socket.on("receive_message", (data) => {
-      setMessageList((list) => [...list, data]);
+    socket.on('disconnect', () => {
+        console.log(`User disconnected: ${socket.id}`);
     });
+});
 
-    // Clean up listeners when the component closes
-    return () => {
-      socket.off("load_messages");
-      socket.off("receive_message");
-    };
-  }, []);
-
-  return (
-    <div className="chat-container">
-      <div className="chat-header">
-        <h2>SSSnappy-Chat</h2>
-      </div>
-      
-      <div className="chat-messages-box">
-        {messageList.map((msg, index) => {
-          // Dynamic conditional check: shifts bubbles based on who typed them
-          const isMyMessage = msg.senderId === socket.id;
-          
-          return (
-            <div 
-              key={index} 
-              className={`chat-message-row ${isMyMessage ? 'my-message' : 'other-message'}`}
-            >
-              <div className="chat-bubble">
-                <span>{msg.text}</span>
-                <span className="chat-bubble-time">{msg.time}</span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="chat-input-panel">
-        <input 
-          type="text" 
-          value={message} 
-          className="chat-input-field"
-          placeholder="Type a message..." 
-          onChange={(e) => setMessage(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-        />
-        <button onClick={sendMessage} className="chat-send-btn">
-          Send
-        </button>
-      </div>
-    </div>
-  );
-}
-
-export default App;
+// Port configured to 5001 to completely clear out AirPlay service lanes
+const PORT = process.env.PORT || 5001;
+server.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
