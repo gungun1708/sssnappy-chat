@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import io from 'socket.io-client';
-import './App.css'; // Connects your custom theme sheet layout files
+import './App.css';
 
 const socket = io.connect("http://localhost:5001");
 
@@ -12,7 +12,8 @@ function App() {
     if (message.trim() !== "") {
       const messageData = {
         text: message,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        senderId: socket.id // Tagging the message packet with your unique connection ID
       };
 
       socket.emit("send_message", messageData);
@@ -43,12 +44,22 @@ function App() {
       </div>
       
       <div className="chat-messages-box">
-        {messageList.map((msg, index) => (
-          <div key={index} className="chat-bubble">
-            <span>{msg.text}</span>
-            <span className="chat-bubble-time">{msg.time}</span>
-          </div>
-        ))}
+        {messageList.map((msg, index) => {
+          // Check if the item's senderId matches your own active socket channel ID
+          const isMyMessage = msg.senderId === socket.id;
+          
+          return (
+            <div 
+              key={index} 
+              className={`chat-message-row ${isMyMessage ? 'my-message' : 'other-message'}`}
+            >
+              <div className="chat-bubble">
+                <span>{msg.text}</span>
+                <span className="chat-bubble-time">{msg.time}</span>
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       <div className="chat-input-panel">
